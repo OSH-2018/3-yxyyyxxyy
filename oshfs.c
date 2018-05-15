@@ -12,9 +12,9 @@
 #define DEBUGLOG printf("yes\n");
 #endif // debugprint
 
-#define test2 4096			//如果printf输出了 “请把test2修改为xxx”，在这里修改即可
-
 #define min(a,b) ((a) < (b) ? (a) : (b))
+
+#define fastmode		//在这个模式下，必须保证共用体文件夹和文件对应成员完全对齐，能加速
 
 #define MAXSIZE (2 * 1024 * 1024 * (size_t)1024)     //2GB
 #define BLOCKSIZE (4 * (size_t)1024)                 //4KB	注：不要修改！
@@ -25,22 +25,26 @@ static const size_t size = MAXSIZE;                         //size = 2gb
 static const size_t blocksize = BLOCKSIZE;                  //blocksize = 4kb
 static const size_t blocknr = MAXSIZE / BLOCKSIZE;          //blocknr = num of block
 static int cachemode = 1;							//加速大文件写入 只在块大小为4k时有效
+
+
 /**********************************数据结构定义****************************************/
 
 typedef enum blockkind{efile, edir, edata} Blockkind;
 
+/******这段因为对齐原因不能用，不过还是使用这种结构********/
+/*
 typedef struct filenode {
     char filename[MAXNAMELEN];
     struct stat filest;
-    void *next;
-    void *nextcontent;
+    int next;
+    int nextcontent;
 
 #if test2 == 4096
-	char content[BLOCKSIZE - sizeof(Blockkind)- sizeof(char) * MAXNAMELEN - sizeof(struct stat) - sizeof(void *) * 2 - 8];		//能写一部分东西
+	char content[BLOCKSIZE - sizeof(Blockkind)- sizeof(char) * MAXNAMELEN - sizeof(struct stat) - sizeof(int) * 2 - 8];		//能写一部分东西
 #elif test2 == 4092
-	char content[BLOCKSIZE - sizeof(Blockkind)- sizeof(char) * MAXNAMELEN - sizeof(struct stat) - sizeof(void *) * 2 - 4];
+	char content[BLOCKSIZE - sizeof(Blockkind)- sizeof(char) * MAXNAMELEN - sizeof(struct stat) - sizeof(int) * 2 - 4];
 #else
-	char content[BLOCKSIZE - sizeof(Blockkind)- sizeof(char) * MAXNAMELEN - sizeof(struct stat) - sizeof(void *) * 2];
+	char content[BLOCKSIZE - sizeof(Blockkind)- sizeof(char) * MAXNAMELEN - sizeof(struct stat) - sizeof(int) * 2];
 #endif	//test2
 
 }Filenode;
@@ -48,34 +52,35 @@ typedef struct filenode {
 typedef struct dirnode{
 	char dirname[MAXNAMELEN];
 	struct stat dirst;
-	void *next;
-	void *firstchild;
+	int next;
+	int firstchild;
 
 #if test2 == 4096
-	char notuse[BLOCKSIZE - sizeof(Blockkind) - sizeof(char) * MAXNAMELEN - sizeof(struct stat) - sizeof(void *) * 2 - 8];
+	char notuse[BLOCKSIZE - sizeof(Blockkind) - sizeof(char) * MAXNAMELEN - sizeof(struct stat) - sizeof(int) * 2 - 8];
 #elif test2 == 4092
-	char notuse[BLOCKSIZE - sizeof(Blockkind) - sizeof(char) * MAXNAMELEN - sizeof(struct stat) - sizeof(void *) * 2 - 4];
+	char notuse[BLOCKSIZE - sizeof(Blockkind) - sizeof(char) * MAXNAMELEN - sizeof(struct stat) - sizeof(int) * 2 - 4];
 #else
-	char notuse[BLOCKSIZE - sizeof(Blockkind) - sizeof(char) * MAXNAMELEN - sizeof(struct stat) - sizeof(void *) * 2];
+	char notuse[BLOCKSIZE - sizeof(Blockkind) - sizeof(char) * MAXNAMELEN - sizeof(struct stat) - sizeof(int) * 2];
 #endif	//test2
 
 }Dirnode;
 
 typedef struct datanode{
-	void *nextcontent;
+	int nextdata;
 
 #if test2 == 4096
-	char content[BLOCKSIZE - sizeof(Blockkind) - sizeof(void *) - 8];
+	char datacontent[BLOCKSIZE - sizeof(Blockkind) - sizeof(int) - 8];
 #elif test2 == 4092
-	char content[BLOCKSIZE - sizeof(Blockkind) - sizeof(void *) - 4];
+	char datacontent[BLOCKSIZE - sizeof(Blockkind) - sizeof(int) - 4];
 #else
-	char content[BLOCKSIZE - sizeof(Blockkind) - sizeof(void *)];
+	char datacontent[BLOCKSIZE - sizeof(Blockkind) - sizeof(int)];
 #endif // test2
 
 }Datanode;
 
 typedef struct blocknode{
 	Blockkind kind;
+	int blocknum;
 	union{
 		Filenode file;
 		Dirnode dir;
@@ -85,39 +90,172 @@ typedef struct blocknode{
 
 
 Blocknode testsize;
-static const size_t datasize = sizeof(testsize.data.content);	//constant
-static const size_t filesize = sizeof(testsize.file.content);	//constant
+static const size_t DATACONTENTSIZE = sizeof(testsize.data.content);	//constant
+static const size_t CONTENTSIZE = sizeof(testsize.file.content);	//constant
+*/
+
+/******手动实现结构体******/
+
+#define CKINDOFFSET 0
+#define CKINDSIZE (sizeof(Blockkind))
+
+#define CBLOCKNUMOFFSET CKINDSIZE
+#define CBLOCKNUMSIZE (sizeof(int))
+
+#define CFILENAMEOFFSET (CBLOCKNUMOFFSET + CBLOCKNUMSIZE)
+#define CFILENAMESIZE MAXNAMELEN
+
+#define CFILESTOFFSET (CFILENAMEOFFSET + CFILENAMESIZE)
+#define CFILESTSIZE (sizeof(struct stat))
+
+#define CNEXTOFFSET (CFILESTOFFSET + CFILESTSIZE)
+#define CNEXTSIZE (sizeof(int))
+
+#define CNEXTCONTENTOFFSET (CNEXTOFFSET + CNEXTSIZE)
+#define CNEXTCONTENTSIZE (sizeof(int))
+
+#define CCONTENTOFFSET (CNEXTCONTENTOFFSET + CNEXTCONTENTSIZE)
+#define CCONTENTSIZE (BLOCKSIZE - CCONTENTOFFSET)
+
+#define CDIRNAMEOFFSET CFILENAMEOFFSET
+#define CDIRNAMESIZE CFILENAMESIZE
+
+#define CDIRSTOFFSET CFILESTOFFSET
+#define CDIRSTSIZE CFILESTSIZE
+
+#define CFIRSTCHILDOFFSET CNEXTCONTENTOFFSET
+#define CFIRSTCHILDSIZE CNEXTCONTENTSIZE
+
+#define CNOTUSEOFFSET CCONTENTOFFSET
+#define CNOTUSESIZE CCONTENTSIZE
+
+#define CNEXTDATAOFFSET CFILENAMEOFFSET
+#define CNEXTDATASIZE (sizeof(int))
+
+#define CDATACONTENTOFFSET (CNEXTDATAOFFSET + CNEXTDATASIZE)
+#define CDATACONTENTSIZE (BLOCKSIZE - CDATACONTENTOFFSET)
+
+#ifdef fastmode
+//这个快速模式所有用到的，节省空间
+static int KINDOFFSET,BLOCKNUMOFFSET,FILENAMEOFFSET,DIRNAMEOFFSET,NEXTOFFSET,NEXTDATAOFFSET,NEXTCONTENTOFFSET;
+static int FILESTOFFSET,FIRSTCHILDOFFSET,DIRSTOFFSET,DATACONTENTOFFSET,CONTENTSIZE,DATACONTENTSIZE,CONTENTOFFSET;
+
+#else
+
+static int KINDOFFSET, KINDSIZE ,BLOCKNUMOFFSET, BLOCKNUMSIZE, FILENAMEOFFSET, FILENAMESIZE, FILESTOFFSET, DATACONTENTSIZE;
+static int FILESTSIZE, NEXTOFFSET ,NEXTSIZE, NEXTCONTENTOFFSET, NEXTCONTENTSIZE, CONTENTOFFSET, CONTENTSIZE, DIRNAMEOFFSET;
+static int DIRNAMESIZE, DIRSTOFFSET ,DIRSTSIZE, FIRSTCHILDOFFSET, FIRSTCHILDSIZE, NEXTDATAOFFSET, NEXTDATASIZE, DATACONTENTOFFSET;
+
+#endif // fastmode
+
+//在init中算出这些常量提高速度
+
+//REPLACE:
+//Blocknode * -> char *
+//x -> kind -> (*(Blockkind *)(x + KINDOFFSET))
+//(x -> file).filename -> (x + FILENAMEOFFSET)
+//(X -> file).filest -> (*(struct stat *)(x + FILESTOFFSET))
+//(X -> file).next -> mem[*(int *)(x + NEXTOFFSET)]
+//(X -> file).nextcontent -> mem[*(int *)(x + NEXTCONTENTOFFSET)]
+//(X -> file).content -> (x + CONTENTOFFSET)
+
+
+
+/********链队列,用于加速下一个空闲节点获取*********/
+//用于加速下一个空闲结点的获取
+
+typedef struct qnode{
+    int data;
+    struct qnode *next;
+}QNode, *Qlink;
+
+typedef struct linkqueue{
+    Qlink head;
+    Qlink tail;
+    int length;
+}LinkQueue;
+
+static void initQueue(LinkQueue *q){
+    q -> length = 0;
+    q -> head = (Qlink)malloc(sizeof(QNode));  //头结点
+    q -> tail = q -> head;
+    q -> head -> next = NULL;
+}
+
+static void destroy(Qlink q){
+	Qlink p;
+    while(q){
+		p = q -> next;
+		free(q);
+		q = p;
+    }
+}
+
+static void destroyQueue(LinkQueue *q){
+    destroy(q -> head);
+}
+
+static void enQueue(LinkQueue *q, int d){
+    q -> tail = q -> tail -> next = (Qlink)malloc(sizeof(QNode));
+    q -> length ++;
+    q -> tail -> data = d;
+    q -> tail -> next = NULL;
+}
+
+static int deQueue(LinkQueue *q, int *data){
+    if(q -> head -> next == NULL)return 0;
+    Qlink dele = q -> head -> next;
+    q -> head -> next = q -> head -> next -> next;
+    *data = dele -> data;
+    free(dele);
+    q -> length --;
+	if(q -> head -> next == NULL)q -> tail = q -> head;
+    return 1;
+}
+
+static LinkQueue Q;		//未用mem结点队列
+
+
+/********类似cache，用于加速大文件写入********/
+
+static char *last = NULL, *tail = NULL;		//last tail 上一次访问的文件、数据的尾部
+static off_t lastoffset = 0, lastsize = 0;	//相当于一个cache用于提升write的速度。write总是4k4k的写
+static char lastpath[PATHMAXLEN];					//上一次的path，用于cache
+
+
 
 /************************************辅助函数、全局变量*************************************/
 
-static unsigned int blockuse = 0;		//已使用的块数
+static char *mem[MAXSIZE / BLOCKSIZE];	//0用于存储头指针
+static char *root = NULL;				//存放在mem[0]中
 
-static Blocknode *root = NULL, *last = NULL, *tail = NULL;
-static off_t lastoffset = 0, lastsize = 0;		//相当于一个cache用于提升write的速度。write总是4k4k的写
-static char lastpath[256];				//用于cache
-
-static Blocknode *mallocNode(Blockkind bk){
-	if(blockuse >= blocknr) return NULL;		//已经满了 失败
-	blockuse ++;
-	Blocknode *p = (Blocknode *)mmap(NULL, blocksize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	memset(p, 0, blocksize);
-	p -> kind = bk;
+static char *mallocNode(Blockkind bk){
+	int n;
+	if(!deQueue(&Q, &n)) return NULL;
+	char *p = (char *)mmap(NULL, blocksize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	mem[n] = p;
+	//memset(p, 0, blocksize);  	//不需要他
+	*(Blockkind *)(p + KINDOFFSET) = bk;
+	*(int *)(p + BLOCKNUMOFFSET) = n;
 
 #ifdef debugprint
-	printf("malloc node pointer is %p \n", p);
+	printf("malloc node pointer is %p \tuse mem[%d]\n", p, n);
 #endif // debugprint
 
 	return p;
 }
 
-static void freeNode(Blocknode *p){
-	if(p) {
-		munmap(p, blocksize);
-		blockuse --;
+static void freeNode(char *block){
+	if(block) {
+		int temp = *(int *)(block + BLOCKNUMOFFSET);
+		if(!temp) return;
+		mem[temp] = NULL;
+		enQueue(&Q, temp);	//回收
+		munmap(block, blocksize);
 	}
 }
 
-char *stringSplit(char **s, char c){  //找到字符串s中第一次出现的c，返回前一半，s指向后一半,长度小于PATHMAXLEN
+static char *stringSplit(char **s, char c){  //找到字符串s中第一次出现的c，返回前一半，s指向后一半,长度小于PATHMAXLEN
     static char newstr[PATHMAXLEN];
     char *pos = strchr(*s,c);
     if(!pos){
@@ -134,34 +272,46 @@ char *stringSplit(char **s, char c){  //找到字符串s中第一次出现的c�
 
 #ifdef debugprint
 
-static void traverseBlockInSameLayer(Blocknode *first){
-	printf("[debug] ");
-	Blocknode *t = first;
-	while(t){
-		printf("%s ", (t -> kind == efile) ? (t -> file).filename : (t -> dir).dirname);
-		t = (Blocknode *)((t -> kind == efile) ? (t -> file).next : (t -> dir).next);
-	}
-	printf("\n");
+static void traverseBlockInSameLayer(char *first){
+//	printf("[debug] ");
+//	char *t = first;
+//	while(t){
+//		printf("%s ", (t -> kind == efile) ? (t -> file).filename : (t -> dir).dirname);
+//		t = (char *)((t -> kind == efile) ? (t -> file).next : (t -> dir).next);
+//	}
+//	printf("\n");
+	return;
 }
 
-static void printNodeInfo(Blocknode *node){
+static void printNodeInfo(char *node){
 	if(!node) {
 		printf("[NodeInfo]\tnode is null\n");
 		return;
 	}
-	switch(node -> kind){
-		case efile: printf("[NodeInfo]\tnode kind is %s\n\t\tnode name is %s\n", "file", (node -> file).filename);break;
-		case edir: printf("[NodeInfo]\tnode kind is %s\n\t\tnode name is %s\n", "dir", (node -> dir).dirname);break;
+	switch((*(Blockkind *)(node + KINDOFFSET))){
+		case efile: printf("[NodeInfo]\tnode kind is %s\n\t\tnode name is %s\n", "file", (node + FILENAMEOFFSET));break;
+		case edir: printf("[NodeInfo]\tnode kind is %s\n\t\tnode name is %s\n", "dir", (node + DIRNAMEOFFSET));break;
 		case edata: printf("[NodeInfo]\tnode kind is data\n");break;
 	}
 }
 
+static void printFreeMem10(LinkQueue Q){
+	Qlink p = Q.head;
+	printf("[debug] free mem : ");
+	int i = 0;
+	while(p = p -> next){
+		if(i ++ >= 10)break;
+		printf("%d,", p -> data);
+	}
+	printf("\n");
+}
+
 #endif // debugprint
 
-static Blocknode *getBlockNode(const char *name, int stopAtParent, char **filename)
+static char *getBlockNode(const char *name, int stopAtParent, char **filename)
 {
 	char *path = (char *)((name && *name == '/') ? name + 1 : name), *str = NULL;					//跳过开头的 /
-    Blocknode *p = root, *q = NULL;
+    char *p = root, *q = NULL;
     while(path && *path && (p || stopAtParent)){
 		str = stringSplit(&path, '/');
 		if(!path || !*path){		//str表示文件
@@ -169,24 +319,53 @@ static Blocknode *getBlockNode(const char *name, int stopAtParent, char **filena
 				*filename = str;
 				return q;
 			}
+#ifdef fastmode
+			int f = 1;
+			while(p && (f = strcmp((p + DIRNAMEOFFSET), str)))
+				p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;	//找下一个
+			if(!f) return p;
+#else
 			while(p){
 				int f = 1;
-				while(p && p -> kind == edir && (f = strcmp((p -> dir).dirname, str))) p = (Blocknode *)((p -> dir).next);	//找下一个
-				while(p && p -> kind == efile && (f = strcmp((p -> file).filename, str))) p = (Blocknode *)((p -> file).next);
+				while(p && (*(Blockkind *)(p + KINDOFFSET)) == edir && (f = strcmp((p + DIRNAMEOFFSET), str)))
+					p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;	//找下一个
+				while(p && (*(Blockkind *)(p + KINDOFFSET)) == efile && (f = strcmp((p + FILENAMEOFFSET), str)))
+					p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;
 				if(!f) return p;	//找到
 			}
+#endif // fastmode
 			return NULL;	//没找到文件
 		}
 		else{		//进入文件夹
-			while(p){
-				while(p && p -> kind == efile) p = (Blocknode *)((p -> file).next);	//找到同目录下一个文件夹
-				while(p && p -> kind == edir && strcmp((p -> dir).dirname, str)) p = (Blocknode *)((p -> dir).next);
-				if(p && p -> kind == edir && !strcmp((p -> dir).dirname, str)) {	//找到了
+#ifdef fastmode
+			again: while(p && strcmp((p + DIRNAMEOFFSET), str))
+				p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;	//找到同目录下一个文件夹
+			if(!p) return NULL;
+			else {
+				if(*(Blockkind *)(p + KINDOFFSET) == efile) {
+					p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;
+					goto again;
+				}
+				else {
 					q = p;
-					p = (Blocknode *)((p -> dir).firstchild);
+					p = *(int *)(p + FIRSTCHILDOFFSET) ? mem[*(int *)(p + FIRSTCHILDOFFSET)] : NULL;
 					goto finddir;
 				}
 			}
+
+#else
+			while(p){
+				while(p && *(Blockkind *)(p + KINDOFFSET) == efile)
+					p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;	//找到同目录下一个文件夹
+				while(p && *(Blockkind *)(p + KINDOFFSET) == edir && strcmp((p + DIRNAMEOFFSET), str))
+					p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;
+				if(p && *(Blockkind *)(p + KINDOFFSET) == edir && !strcmp((p + DIRNAMEOFFSET), str)) {	//找到了
+					q = p;
+					p = *(int *)(p + FIRSTCHILDOFFSET) ? mem[*(int *)(p + FIRSTCHILDOFFSET)] : NULL;
+					goto finddir;
+				}
+			}
+#endif // fastmode
 			return NULL;	//没找到文件夹
 		}
 		finddir: ;		//找到了文件夹，继续
@@ -195,136 +374,152 @@ static Blocknode *getBlockNode(const char *name, int stopAtParent, char **filena
 }
 
 
-static int createBlockNode(const char *path, const struct stat *st, Blockkind kind)		//争取先文件夹再文件 按字母顺序存储
+static int createBlockNode(const char *path, const struct stat *st, Blockkind kind)		//先文件夹再文件 按字母顺序存储
 {
-    Blocknode *p, *q, *r;
+    char *p, *q, *r;
     char *str = NULL;
 	r = q = p = getBlockNode(path, 1, &str);
     if(r){	//不再根目录
-		p = (Blocknode *)((p -> dir).firstchild);
+		p = *(int *)(p + FIRSTCHILDOFFSET) ? mem[*(int *)(p + FIRSTCHILDOFFSET)] : NULL;
 		int f = 1;
-		while(p && p -> kind == edir && (f = strcmp((p -> dir).dirname, str))){
-			if(kind == edir) if(f > 0) break;
+		while(p && (*(Blockkind *)(p + KINDOFFSET)) == edir && (f = strcmp((p + DIRNAMEOFFSET), str))){
+			if(kind == edir && f > 0) break;
 			q = p;		//记录前一个
-			p = (Blocknode *)((p -> dir).next);	//找下一个
+			p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;	//找下一个
 		}
-		while(p && p -> kind == efile && (f = strcmp((p -> file).filename, str))){
-			if(kind == efile) if(f > 0)break;
+		while(p && (*(Blockkind *)(p + KINDOFFSET)) == efile && (f = strcmp((p + FILENAMEOFFSET), str))){
 			if(kind == edir) break;		//创建文件夹 应该放在文件前面
+			else if(f > 0) break;
 			q = p;
-			p = (Blocknode *)((p -> file).next);
+			p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;
 		}
 		if(!f) return 1;	//文件已存在 1
 		if(kind == edir){		//找有没有重名文件
-			Blocknode *s = p;
-			while(s && s -> kind == edir && (f = strcmp((s -> dir).dirname, str))){
-				s = (Blocknode *)((s -> dir).next);	//找下一个
+			char *s = p;
+#ifdef fastmode
+			while(s && (f = strcmp((s + DIRNAMEOFFSET), str))){
+				s = *(int *)(s + NEXTOFFSET) ? mem[*(int *)(s + NEXTOFFSET)] : NULL;	//找下一个
 			}
-			while(s && s -> kind == efile && (f = strcmp((s -> file).filename, str))){
-				s = (Blocknode *)((s -> file).next);
+#else
+			while(s && *(Blockkind *)(*(Blockkind *)(s + KINDOFFSET)) == edir && (f = strcmp((s + DIRNAMEOFFSET), str))){
+				s = *(int *)(s + NEXTOFFSET) ? mem[*(int *)(s + NEXTOFFSET)] : NULL;	//找下一个
 			}
+			while(s && *(Blockkind *)(*(Blockkind *)(s + KINDOFFSET)) == efile && (f = strcmp((s + FILENAMEOFFSET), str))){
+				s = *(int *)(s + NEXTOFFSET) ? mem[*(int *)(s + NEXTOFFSET)] : NULL;
+			}
+#endif // fastmode
 			if(!f) return 1;	//文件已存在 1
 		}
 
 		//创建节点
 		if(strlen(str) >= MAXNAMELEN - 1) return 4;		//name too long
-		Blocknode *n = mallocNode(kind);
+		char *n = mallocNode(kind);
 		if(!n) return 3;	//文件系统满了 3
+#ifdef fastmode
+		strcpy((n + FILENAMEOFFSET), str);
+		*(struct stat *)(n + FILESTOFFSET) = *st;
+		*(int *)(n + NEXTCONTENTOFFSET) = 0;
+		*(int *)(n + NEXTOFFSET) = 0;
+#else
 		if(kind == efile){
-			strcpy((n -> file).filename, str);
-			(n -> file).filest = *st;
-			(n -> file).nextcontent = NULL;
-			(n -> file).next = NULL;
+			strcpy((n + FILENAMEOFFSET), str);
+			*(struct stat *)(n + FILESTOFFSET) = *st;
+			*(int *)(n + NEXTCONTENTOFFSET) = 0;
+			*(int *)(n + NEXTOFFSET) = 0;
 		}
 		else {
-			strcpy((n -> dir).dirname, str);
-			(n -> dir).dirst = *st;
-			(n -> dir).firstchild = NULL;
-			(n -> dir).next = NULL;
+			strcpy((n + DIRNAMEOFFSET), str);
+			*(struct stat *)(n + DIRSTOFFSET) = *st;
+			*(int *)(n + FIRSTCHILDOFFSET) = 0;
+			*(int *)(n + NEXTOFFSET) = 0;
 		}
-
+#endif // fastmode
 		//插入顺序链表
 		if(r == q){		//r是空文件夹或应该存在第一个位置
-			void *temp = (r -> dir).firstchild;
-			(r -> dir).firstchild = (void *)n;
-			if(kind == efile) (n -> file).next = temp;
-			else (n -> dir).next = temp;
-		}
-		else if(q -> kind == edir){		//r不是空文件夹
-			void *temp = (q -> dir).next;
-			(q -> dir).next = (void *)n;
-			if(kind == efile) (n -> file).next = temp;
-			else (n -> dir).next = temp;
+			int *tp = (int *)(r + FIRSTCHILDOFFSET);
+			int temp = *tp;
+			*tp = *(int *)(n + BLOCKNUMOFFSET);
+			*(int *)(n + NEXTOFFSET) = temp;
 		}
 		else{
-			void *temp = (q -> file).next;
-			(q -> file).next = (void *)n;
-			if(kind == efile) (n -> file).next = temp;
-			else (n -> dir).next = temp;
+			int *tp = (int *)(q + NEXTOFFSET);
+			int temp = *tp;
+			*tp = *(int *)(n + BLOCKNUMOFFSET);
+			*(int *)(n + NEXTOFFSET) = temp;
 		}
 	}
 	else{		//在根目录
 		if(*path != '/')return 2;		//目录不存在 2
 		p = root, q = NULL;
 		int f = 1;
-		while(p && p -> kind == edir && (f = strcmp((p -> dir).dirname, str))){
-			if(kind == edir) if(f > 0) break;
+		while(p && (*(Blockkind *)(p + KINDOFFSET)) == edir && (f = strcmp((p + DIRNAMEOFFSET), str))){
+			if(kind == edir && f > 0) break;
 			q = p;		//记录前一个
-			p = (Blocknode *)((p -> dir).next);	//找下一个
+			p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;	//找下一个
 		}
-		while(p && p -> kind == efile && (f = strcmp((p -> file).filename, str))){
-			if(kind == efile) if(f > 0)break;
+		while(p && (*(Blockkind *)(p + KINDOFFSET)) == efile && (f = strcmp((p + FILENAMEOFFSET), str))){
 			if(kind == edir) break;
+			else if(f > 0)break;
 			q = p;
-			p = (Blocknode *)((p -> file).next);
+			p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;
 		}
 		if(!f) return 1;	//文件已存在 1
 		if(kind == edir){		//找有没有重名文件
-			Blocknode *s = p;
-			while(s && s -> kind == edir && (f = strcmp((s -> dir).dirname, str))){
-				s = (Blocknode *)((s -> dir).next);	//找下一个
+			char *s = p;
+#ifdef fastmode
+			while(s && (f = strcmp((s + DIRNAMEOFFSET), str))){
+				s = *(int *)(s + NEXTOFFSET) ? mem[*(int *)(s + NEXTOFFSET)] : NULL;	//找下一个
 			}
-			while(s && s -> kind == efile && (f = strcmp((s -> file).filename, str))){
-				s = (Blocknode *)((s -> file).next);
+#else
+			while(s && (*(Blockkind *)(s + KINDOFFSET)) == edir && (f = strcmp((s + DIRNAMEOFFSET), str))){
+				s = *(int *)(s + NEXTOFFSET) ? mem[*(int *)(s + NEXTOFFSET)] : NULL;	//找下一个
 			}
+			while(s && (*(Blockkind *)(s + KINDOFFSET)) == efile && (f = strcmp((s + FILENAMEOFFSET), str))){
+				s = *(int *)(s + NEXTOFFSET) ? mem[*(int *)(s + NEXTOFFSET)] : NULL;
+			}
+#endif // fastmode
 			if(!f) return 1;	//文件已存在 1
 		}
 
 		//创建节点
 		if(strlen(str) >= MAXNAMELEN - 1) return 4;		//name too long
-		Blocknode *n = mallocNode(kind);
+		char *n = mallocNode(kind);
 		if(!n) return 3;	//文件系统满了 3
+#ifdef fastmode
+		strcpy((n + FILENAMEOFFSET), str);
+		*(struct stat *)(n + FILESTOFFSET) = *st;
+		*(int *)(n + NEXTCONTENTOFFSET) = 0;
+		*(int *)(n + NEXTOFFSET) = 0;
+#else
 		if(kind == efile){
-			strcpy((n -> file).filename, str);
-			(n -> file).filest = *st;
-			(n -> file).nextcontent = NULL;
-			(n -> file).next = NULL;
+			strcpy((n + FILENAMEOFFSET), str);
+			*(struct stat *)(n + FILESTOFFSET) = *st;
+			*(int *)(n + NEXTCONTENTOFFSET) = 0;
+			*(int *)(n + NEXTOFFSET) = 0;
 		}
 		else {
-			strcpy((n -> dir).dirname, str);
-			(n -> dir).dirst = *st;
-			(n -> dir).firstchild = NULL;
-			(n -> dir).next = NULL;
+			strcpy((n + DIRNAMEOFFSET), str);
+			*(struct stat *)(n + DIRSTOFFSET) = *st;
+			*(int *)(n + FIRSTCHILDOFFSET) = 0;
+			*(int *)(n + NEXTOFFSET) = 0;
 		}
-
+#endif // fastmode
 		//插入顺序链表
 		if(!q){		//要插在root
-			Blocknode *temp = root;
-			root = n;
-			if(kind == efile) (n -> file).next = (void *)temp;
-			else (n -> dir).next = (void *)temp;
-		}
-		else if(q -> kind == edir){		//r不是空文件夹
-			void *temp = (q -> dir).next;
-			(q -> dir).next = (void *)n;
-			if(kind == efile) (n -> file).next = temp;
-			else (n -> dir).next = temp;
+			char *temp = root;
+			*(char **)(mem[0]) = root = n;
+			if(temp){
+				*(int *)(n + NEXTOFFSET) = *(int *)(temp + BLOCKNUMOFFSET);
+			}
+			else {
+				*(int *)(n + NEXTOFFSET) = 0;
+			}
 		}
 		else{
-			void *temp = (q -> file).next;
-			(q -> file).next = (void *)n;
-			if(kind == efile) (n -> file).next = temp;
-			else (n -> dir).next = temp;
+			int *tp = (int *)(q + NEXTOFFSET);
+			int temp = *tp;
+			*tp = *(int *)(n + BLOCKNUMOFFSET);
+			*(int *)(n + NEXTOFFSET) = temp;
 		}
 	}
 
@@ -335,180 +530,175 @@ static int createBlockNode(const char *path, const struct stat *st, Blockkind ki
 	return 0;	//0成功
 }
 
-static int deleteBlockNode(const char *path){//touch a && mkdir -p b/bb && mkdir -p c/cc	bb会消失 c会消失
+static int deleteBlockNode(const char *path){
 	char *str;
 	int f = 0;
-	Blocknode *r = getBlockNode(path, 1, &str), *q = NULL, *p = NULL;
+	char *r = getBlockNode(path, 1, &str), *q = NULL, *p = NULL;
 	if(!r) p = root;
-	else p = (Blocknode *)((r -> dir).firstchild);
-
-	while(p && p -> kind == edir && (f = strcmp((p -> dir).dirname, str))) {
+	else p = *(int *)(r + FIRSTCHILDOFFSET) ? mem[*(int *)(r + FIRSTCHILDOFFSET)] : NULL;
+#ifdef fastmode
+	while(p && (f = strcmp((p + DIRNAMEOFFSET), str))) {
 		q = p;
-		p = (Blocknode *)((p -> dir).next);	//找下一个
+		p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;	//找下一个
 	}
-	while(p && p -> kind == efile && (f = strcmp((p -> file).filename, str))) {
+#else
+	while(p && (*(Blockkind *)(p + KINDOFFSET)) == edir && (f = strcmp((p + DIRNAMEOFFSET), str))) {
 		q = p;
-		p = (Blocknode *)((p -> file).next);
+		p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;	//找下一个
 	}
+	while(p && (*(Blockkind *)(p + KINDOFFSET)) == efile && (f = strcmp((p + FILENAMEOFFSET), str))) {
+		q = p;
+		p = *(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL;
+	}
+#endif // fastmode
 	if(!p){
 		return 1;	//file or dir not found 1
 	}
 	else if(!q){		//the first should be deleted
-		if((p -> kind) == edir) {
-			if(p == root) {
-				root = (p -> dir).next;
-				freeNode(p);
-			}
-			else {
-				(r -> dir).firstchild = (p -> dir).next;
-				freeNode(p);
-			}
+		if(p == root) {
+			*(char **)(mem[0]) = root = (*(int *)(p + NEXTOFFSET) ? mem[*(int *)(p + NEXTOFFSET)] : NULL);
+			freeNode(p);
 		}
 		else {
-			if(p == root) {
-				root = (p -> file).next;
-				freeNode(p);
-			}
-			else {
-				(r -> dir).firstchild = (p -> file).next;
-				freeNode(p);
-			}
+			*(int *)(r + FIRSTCHILDOFFSET) = *(int *)(p + NEXTOFFSET);
+			freeNode(p);
 		}
 	}
-	else if((p -> kind) == edir && (q -> kind) == edir) {
-		(q -> dir).next = (p -> dir).next;
-		freeNode(p);
-	}
-	else if((p -> kind) == efile && (q -> kind) == edir) {
-		(q -> dir).next = (p -> file).next;
-		freeNode(p);
-	}
 	else {
-		(q -> file).next = (p -> file).next;
+		*(int *)(q + NEXTOFFSET) = *(int *)(p + NEXTOFFSET);
 		freeNode(p);
 	}
 	return 0;	//succeed
 }
 
-static void destroyBlockDataLinkList(Blocknode *node){
-	Blocknode *p = node, *q = node;
+static void destroyBlockDataLinkList(char *node){
+	char *p = node, *q = node;
 	while(p){
-		q = (Blocknode *)((p -> data).nextcontent);
+		q = *(int *)(p + NEXTDATAOFFSET) ? mem[*(int *)(p + NEXTDATAOFFSET)] : NULL;
 		freeNode(p);
 		p = q;
 	}
 }
 
-static size_t getCurrentFileContentSize(Blocknode *node){
-	Blocknode *p = node;
+static size_t getCurrentFileContentSize(char *node){
+	char *p = node;
 	size_t origsize = 0;
 	while(p){
-		if((p -> kind == efile)) {
-			origsize += sizeof((p -> file).content);
-			p = (p -> file).nextcontent;
+		if(*(Blockkind *)(p + KINDOFFSET) == efile) {
+			origsize += CONTENTSIZE;
+			p = *(int *)(p + NEXTCONTENTOFFSET) ? mem[*(int *)(p + NEXTCONTENTOFFSET)] : NULL;
 		}
-		else if((p -> kind == edata)) {
-			origsize += sizeof((p -> data).content);
-			p = (p -> data).nextcontent;
+		else if(((*(Blockkind *)(p + KINDOFFSET)) == edata)) {
+			origsize += DATACONTENTSIZE;
+			p = *(int *)(p + NEXTDATAOFFSET) ? mem[*(int *)(p + NEXTDATAOFFSET)] : NULL;
 		}
 	}
 	return origsize;
 }
 
-static int modifyCurrentFileContentSize(Blocknode *node, size_t targetSize){
-	Blocknode *p = node, *q = NULL;
+static int modifyCurrentFileContentSize(char *node, size_t targetSize){
+	char *p = node, *q = NULL;
 	size_t origsize = 0;
 	while(p){
-		if((p -> kind == efile)) {
-			origsize += sizeof((p -> file).content);
+		if(*(Blockkind *)(p + KINDOFFSET) == efile) {
+			origsize += CONTENTSIZE;
 			if(origsize >= targetSize){
-				destroyBlockDataLinkList((Blocknode *)((p -> file).nextcontent));
-				(p -> file).nextcontent = NULL;
+				int *ti = (int *)(p + NEXTCONTENTOFFSET);
+				if(*ti) {
+					destroyBlockDataLinkList(mem[*ti]);
+					*ti = 0;
+				}
 			}
 			q = p;
-			p = (Blocknode *)((p -> file).nextcontent);
+			p = *(int *)(p + NEXTCONTENTOFFSET) ? mem[*(int *)(p + NEXTCONTENTOFFSET)] : NULL;
 		}
-		else if((p -> kind == edata)) {
-			origsize += sizeof((p -> data).content);
+		else if(((*(Blockkind *)(p + KINDOFFSET)) == edata)) {
+			origsize += DATACONTENTSIZE;
 			if(origsize >= targetSize){
-				destroyBlockDataLinkList((Blocknode *)((p -> data).nextcontent));
-				(p -> data).nextcontent = NULL;
+				int *ti = (int *)(p + NEXTDATAOFFSET);
+				if(*ti) {
+					destroyBlockDataLinkList(mem[*ti]);
+					*ti = 0;
+				}
 			}
 			q = p;
-			p = (Blocknode *)((p -> data).nextcontent);
+			p = *(int *)(p + NEXTDATAOFFSET) ? mem[*(int *)(p + NEXTDATAOFFSET)] : NULL;
 		}
 	}
 	tail = q;
 	off_t need = targetSize - origsize;
 	lastsize = -need;
-	if(need <= 0)return 0;
-	if(need / sizeof((q -> data).content) + blockuse + 1 > blocknr)return 1;		//空间不足
+	if(need <= 0) return 0;
 	while(origsize < targetSize){
-		if(q -> kind == efile){
-			(q -> file).nextcontent = (void *)mallocNode(edata);
-			q = (Blocknode *)((q -> file).nextcontent);
+		if(*(Blockkind *)(q + KINDOFFSET) == efile){
+			char *t = mallocNode(edata);
+			if(!t) return 1;
+			q = mem[*(int *)(q + NEXTCONTENTOFFSET) = *(int *)(t + BLOCKNUMOFFSET)];
 		}
-		else if(q -> kind == edata){
-			(q -> data).nextcontent = (void *)mallocNode(edata);
-			q = (Blocknode *)((q -> data).nextcontent);
+		else if((*(Blockkind *)(q + KINDOFFSET)) == edata){
+			char *t = mallocNode(edata);
+			if(!t) return 1;
+			q = mem[*(int *)(q + NEXTDATAOFFSET) = *(int *)(t + BLOCKNUMOFFSET)];
 		}
-		if(!q)return 1;
-		(q -> data).nextcontent = NULL;
-		origsize += sizeof((q -> data).content);
+		*(int *)(q + NEXTDATAOFFSET) = 0;
+		origsize += DATACONTENTSIZE;
 	}
 	lastsize = origsize - targetSize;	//还差多少满
 	tail = q;
 	return 0;
 }
 
-static int adjustFileContent(Blocknode *node, off_t offset, const char *buf, size_t size){	//在node文件中offset处写入大小为size的buf
+static int adjustFileContent(char *node, off_t offset, const char *buf, size_t size){	//在node文件中offset处写入大小为size的buf
 	int hit = 0;
-	Blocknode *save;
+	char *save;
 	size_t hitoffset;
 	if(cachemode && last == node && size == 4096 && offset - lastoffset == 4096)	//cache
 		{	//hit
 
 #ifdef debugprint
-			printf("       hit! name is %s\n", (node -> file).filename);
+			printf("       hit! name is %s\n", (node + FILENAMEOFFSET));
 #endif // debugprint
+
 			hit = 1;
 			save = tail;
-			hitoffset = (tail -> kind == efile ? filesize : datasize) - lastsize;
-			if(lastsize + datasize > 4096){	//need one block
-				if(tail -> kind == efile){
-					(tail -> file).nextcontent = (void *)mallocNode(edata);
-					tail = (Blocknode *)((tail -> file).nextcontent);
+			Blockkind k = *(Blockkind *)(tail + KINDOFFSET);
+			hitoffset = (k == efile ? CONTENTSIZE : DATACONTENTSIZE) - lastsize;
+			if(lastsize + DATACONTENTSIZE > 4096){	//need one block
+				if(k == efile){
+					char *t = mallocNode(edata);
+					if(!t) return 1;
+					tail = mem[*(int *)(tail + NEXTCONTENTOFFSET) = *(int *)(t + BLOCKNUMOFFSET)];
 				}
 				else {
-					(tail -> data).nextcontent = (void *)mallocNode(edata);
-					tail = (Blocknode *)((tail -> data).nextcontent);
+					char *t = mallocNode(edata);
+					if(!t) return 1;
+					tail = mem[*(int *)(tail + NEXTDATAOFFSET) = *(int *)(t + BLOCKNUMOFFSET)];
 				}
-				if(!tail)return 1;
-				(tail -> data).nextcontent = NULL;
-				lastsize = lastsize + datasize - 4096;
+				*(int *)(tail + NEXTDATAOFFSET) = 0;
+				lastsize += DATACONTENTSIZE - 4096;
 			}
 			else {	//need two blocks
-				if(tail -> kind == efile){
-					(tail -> file).nextcontent = (void *)mallocNode(edata);
-					tail = (Blocknode *)((tail -> file).nextcontent);
+				if(k == efile){
+					char *t = mallocNode(edata);
+					if(!t) return 1;
+					tail = mem[*(int *)(tail + NEXTCONTENTOFFSET) = *(int *)(t + BLOCKNUMOFFSET)];
 				}
 				else {
-					(tail -> data).nextcontent = (void *)mallocNode(edata);
-					tail = (Blocknode *)((tail -> data).nextcontent);
+					char *t = mallocNode(edata);
+					if(!t) return 1;
+					tail = mem[*(int *)(tail + NEXTDATAOFFSET) = *(int *)(t + BLOCKNUMOFFSET)];
 				}
-				if(!tail)return 1;
-				(tail -> data).nextcontent = (void *)mallocNode(edata);
-				tail = (Blocknode *)((tail -> data).nextcontent);
-				if(!tail)return 1;
-				(tail -> data).nextcontent = NULL;
-				lastsize = lastsize + datasize - 4096 * 2;
+				char *tt = mallocNode(edata);
+				if(!tt) return 1;
+				tail = mem[*(int *)(tail + NEXTDATAOFFSET) = *(int *)(tt + BLOCKNUMOFFSET)];
+				*(int *)(tail + NEXTDATAOFFSET) = 0;
+				lastsize += DATACONTENTSIZE * 2 - 4096;
 			}
 		}
 
-	else if(modifyCurrentFileContentSize(node, (node -> file).filest.st_size)) return 1;	//空间不足
-	last = node;
+	else if(modifyCurrentFileContentSize(node, ((struct stat *)(node + FILESTOFFSET)) -> st_size)) return 1;	//空间不足
 	lastoffset = offset;
-	Blocknode *p = node;
+	char *p = last = node;
 	char *pos = (char *)buf;
 	size_t needsize = size;
 	off_t needoffset = offset;
@@ -517,93 +707,95 @@ static int adjustFileContent(Blocknode *node, off_t offset, const char *buf, siz
 		needoffset = hitoffset;
 	}
 	while(p){
-		if((p -> kind == efile)) {
-			if(filesize > needoffset){
-				size_t ss = min(filesize - needoffset, needsize);
-				memcpy((p -> file).content + needoffset, pos, ss);
+		if(*(Blockkind *)(p + KINDOFFSET) == efile) {
+			if(CONTENTSIZE > needoffset){
+				size_t ss = min(CONTENTSIZE - needoffset, needsize);
+				memcpy((p + CONTENTOFFSET) + needoffset, pos, ss);
 				pos += ss;
 				needoffset = 0;
 				needsize -= ss;
 				if(needsize <= 0)break;
 			}
-			else needoffset -= filesize;
-			p = (Blocknode *)((p -> file).nextcontent);
+			else needoffset -= CONTENTSIZE;
+			p = *(int *)(p + NEXTCONTENTOFFSET) ? mem[*(int *)(p + NEXTCONTENTOFFSET)] : NULL;
 		}
 		else {
-			if(datasize > needoffset){
-				size_t ss = min(datasize - needoffset, needsize);
-				memcpy((p -> data).content + needoffset, pos, ss);
+			if(DATACONTENTSIZE > needoffset){
+				size_t ss = min(DATACONTENTSIZE - needoffset, needsize);
+				memcpy((p + DATACONTENTOFFSET) + needoffset, pos, ss);
 				pos += ss;
 				needoffset = 0;
 				needsize -= ss;
 				if(needsize <= 0)break;
 			}
-			else needoffset -= datasize;
-			p = (Blocknode *)((p -> data).nextcontent);
+			else needoffset -= DATACONTENTSIZE;
+			p = *(int *)(p + NEXTDATAOFFSET) ? mem[*(int *)(p + NEXTDATAOFFSET)] : NULL;
 		}
 	}
 	return 0;
 }
 
-static void readFileContent(Blocknode *node, char *buf, off_t offset, int size){
-	Blocknode *p = node;
+static void readFileContent(char *node, char *buf, off_t offset, int size){
+	char *p = node;
 	char *pos = buf;
 	int needsize = size;
 	off_t needoffset = offset;
 	while(p){
-		if((p -> kind == efile)) {
-			if(sizeof((p -> file).content) > needoffset){
-				size_t ss = min(sizeof((p -> file).content) - needoffset, needsize);
-				memcpy(pos, (p -> file).content + needoffset, ss);
+		if(*(Blockkind *)(p + KINDOFFSET) == efile) {
+			if(CONTENTSIZE > needoffset){
+				size_t ss = min(CONTENTSIZE - needoffset, needsize);
+				memcpy(pos, (p + CONTENTOFFSET) + needoffset, ss);
 				pos += ss;
 				needoffset = 0;
 				needsize -= ss;
 				if(needsize <= 0)break;
 			}
-			else needoffset -= sizeof((p -> file).content);
-			p = (p -> file).nextcontent;
+			else needoffset -= CONTENTSIZE;
+			p = *(int *)(p + NEXTCONTENTOFFSET) ? mem[*(int *)(p + NEXTCONTENTOFFSET)] : NULL;
 		}
-		else if((p -> kind == edata)) {
-			if(sizeof((p -> data).content) > needoffset){
-				size_t ss = min(sizeof((p -> data).content) - needoffset, needsize);
-				memcpy(pos, (p -> data).content + needoffset, ss);
+		else if(*(Blockkind *)(p + KINDOFFSET) == edata) {
+			if(DATACONTENTSIZE > needoffset){
+				size_t ss = min(DATACONTENTSIZE - needoffset, needsize);
+				memcpy(pos, (p + DATACONTENTOFFSET) + needoffset, ss);
 				pos += ss;
 				needoffset = 0;
 				needsize -= ss;
 				if(needsize <= 0)break;
 			}
-			else needoffset -= sizeof((p -> data).content);
-			p = (p -> data).nextcontent;
+			else needoffset -= DATACONTENTSIZE;
+			p = *(int *)(p + NEXTDATAOFFSET) ? mem[*(int *)(p + NEXTDATAOFFSET)] : NULL;
 		}
 	}
 }
 
 
-void destroyBlockNodeAndChildren(Blocknode *node){	//clear dir
+void destroyBlockNodeAndChildren(char *node){	//clear dir
 	if(!node)return;
-	if((node -> kind) == efile) destroyBlockNodeAndChildren(((Blocknode *)(node -> file).next));
-	else {
-		destroyBlockNodeAndChildren(((Blocknode *)(node -> dir).next));
-		destroyBlockNodeAndChildren(((Blocknode *)(node -> dir).firstchild));
-	}
-
-	//delete node
-	if((node -> kind) == efile) {
-		destroyBlockDataLinkList((Blocknode *)(((node -> file).nextcontent)));	//destroy content
-		freeNode((Blocknode *)node);	//destroy filenode
+	if(*(Blockkind *)(node + KINDOFFSET) == efile) {
+		int ti = *(int *)(node + NEXTOFFSET), tj = *(int *)(node + NEXTCONTENTOFFSET);
+		if(ti) destroyBlockNodeAndChildren(mem[ti]);
+		if(tj) destroyBlockDataLinkList(mem[tj]);	//destroy content
+		freeNode(node);	//destroy filenode
 	}
 	else {
-		freeNode((Blocknode *)node);	//destroy dirnode
+		int ti = *(int *)(node + NEXTOFFSET), tj = *(int *)(node + FIRSTCHILDOFFSET);
+		if(ti) destroyBlockNodeAndChildren(mem[ti]);
+		if(tj) destroyBlockNodeAndChildren(mem[tj]);
+		freeNode(node);	//destroy dirnode
 	}
 }
 
-static void renameBlock(Blocknode *node, const char *newname){
-	if(node -> kind == efile){
-		strcpy((node -> file).filename, newname);
+static void renameBlock(char *node, const char *newname){
+#ifdef fastmode
+	strcpy((node + FILENAMEOFFSET), newname);
+#else
+	if(*(Blockkind *)(node + KINDOFFSET) == efile){
+		strcpy((node + FILENAMEOFFSET), newname);
 	}
 	else {
-		strcpy((node -> dir).dirname, newname);
+		strcpy((node + DIRNAMEOFFSET), newname);
 	}
+#endif // fastmode
 }
 
 /************************************接口实现*************************************/
@@ -611,15 +803,76 @@ static void renameBlock(Blocknode *node, const char *newname){
 
 static void *oshfs_init(struct fuse_conn_info *conn)
 {
-#ifdef debugprint
-	if(sizeof(testsize) != 4096){
-		fprintf(stderr,"请把宏定义的test2值修改为%ld\n",sizeof(testsize));
-		getchar();
-		getchar();
-	}
-	printf("[debug] init\n");
-#endif // debugprint
 
+	//计算各个常量
+#ifdef fastmode
+	//这个快速模式只计算用到的
+	KINDOFFSET = CKINDOFFSET;
+	BLOCKNUMOFFSET = CBLOCKNUMOFFSET;
+	FILENAMEOFFSET = CFILENAMEOFFSET;
+	DIRNAMEOFFSET = CDIRNAMEOFFSET;
+	NEXTOFFSET = CNEXTOFFSET;
+	NEXTDATAOFFSET = CNEXTDATAOFFSET;
+	NEXTCONTENTOFFSET = CNEXTCONTENTOFFSET;
+	FILESTOFFSET = CFILESTOFFSET;
+	FIRSTCHILDOFFSET = CFIRSTCHILDOFFSET;
+	DIRSTOFFSET = CDIRSTOFFSET;
+	DATACONTENTOFFSET = CDATACONTENTOFFSET;
+	CONTENTSIZE = CCONTENTSIZE;
+	DATACONTENTSIZE = CDATACONTENTSIZE;
+	CONTENTOFFSET = CCONTENTOFFSET;
+#else
+	KINDOFFSET = CKINDOFFSET;
+	KINDSIZE = CKINDSIZE;
+	BLOCKNUMOFFSET = CBLOCKNUMOFFSET;
+	BLOCKNUMSIZE = CBLOCKNUMSIZE;
+	FILENAMEOFFSET = CFILENAMEOFFSET;
+	FILENAMESIZE = CFILENAMESIZE;
+	FILESTOFFSET = CFILESTOFFSET;
+	DATACONTENTSIZE = CDATACONTENTSIZE;
+	FILESTSIZE = CFILESTSIZE;
+	NEXTOFFSET = CNEXTOFFSET;
+	NEXTSIZE = CNEXTSIZE;
+	NEXTCONTENTOFFSET = CNEXTCONTENTOFFSET;
+	NEXTCONTENTSIZE = CNEXTCONTENTSIZE;
+	CONTENTOFFSET = CCONTENTOFFSET;
+	CONTENTSIZE = CCONTENTSIZE;
+	DIRNAMEOFFSET = CDIRNAMEOFFSET;
+	DIRNAMESIZE = CDIRNAMESIZE;
+	DIRSTOFFSET = CDIRSTOFFSET;
+	DIRSTSIZE = CDIRSTSIZE;
+	FIRSTCHILDOFFSET = CFIRSTCHILDOFFSET;
+	FIRSTCHILDSIZE = CFIRSTCHILDSIZE;
+	NEXTDATAOFFSET = CNEXTDATAOFFSET;
+	NEXTDATASIZE = CNEXTDATASIZE;
+	DATACONTENTOFFSET = CDATACONTENTOFFSET;
+#endif // fastmode
+
+	//初始化未用队列
+#ifdef fastmode
+	//直接初始化节省时间
+    Qlink p = Q.head = (Qlink)malloc(sizeof(QNode));  //头结点
+	int i;
+	for(i = 1; i < blocknr; i ++){	//0用于存储头指针
+		p = p -> next = (Qlink)malloc(sizeof(QNode));
+		p -> data = i;
+	}
+	Q.tail = p;
+	p -> next = NULL;
+	Q.length = blocknr - 1;
+#else
+	initQueue(&Q);
+	int i;
+	for(i = 1; i < blocknr; i ++){	//0用于存储头指针
+		enQueue(&Q, i);
+	}
+#endif // fastmode
+	//初始化mem0 前n个字节存入头指针
+	char *pp = (char *)mmap(NULL, blocksize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	mem[0] = pp;
+	memset(pp, 0, sizeof(char *));	//root指针一开始是NULL 只用前n位存
+
+	//检测是否可以使用cache
 	if(BLOCKSIZE != 4096) cachemode = 0;		//不是4k的块不能加速大文件写入
 	else cachemode = 1;
 
@@ -641,6 +894,10 @@ static void *oshfs_init(struct fuse_conn_info *conn)
 //        munmap(mem[i], blocksize);
 //    }
 
+#ifdef debugprint
+	printFreeMem10(Q);
+#endif // debugprint
+
 	return NULL;
 }
 
@@ -652,12 +909,16 @@ printf("[debug] getattr\n");
 #endif // debugprint
 
     int ret = 0;
-    Blocknode *node = getBlockNode(path, 0, NULL);
+    char *node = getBlockNode(path, 0, NULL);
     if(strcmp(path, "/") == 0) {
         memset(stbuf, 0, sizeof(struct stat));
         stbuf->st_mode = S_IFDIR | 0755;
     } else if(node) {
-        memcpy(stbuf, (node -> kind == efile) ? &(node -> file).filest : &(node -> dir).dirst, sizeof(struct stat));
+#ifdef fastmode
+		memcpy(stbuf, node + FILESTOFFSET, sizeof(struct stat));
+#else
+        memcpy(stbuf, (*(Blockkind *)(node + KINDOFFSET) == efile) ? (struct stat *)(node + FILESTOFFSET) : (struct stat *)(node + DIRSTOFFSET), sizeof(struct stat));
+#endif // fastmode
     } else {
         ret = -ENOENT;
     }
@@ -671,23 +932,28 @@ static int oshfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, of
 printf("[debug] readdir\n");
 #endif // debugprint
 
-	Blocknode *node = root;
+	char *node = root;
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
     if(strcmp(path, "/")){
 		node = getBlockNode(path, 0, NULL);
 		if(!node) return -ENOENT;
-		node = (Blocknode *)((node -> dir).firstchild);
+		node = *(int *)(node + FIRSTCHILDOFFSET) ? mem[*(int *)(node + FIRSTCHILDOFFSET)] : NULL;
     }
     while(node) {
-		if(node -> kind == efile){
-			filler(buf, (node -> file).filename, &(node -> file).filest, 0);
-			node = (Blocknode *)((node -> file).next);
+#ifdef fastmode
+		filler(buf, node + FILENAMEOFFSET, (const struct stat *)(node + FILESTOFFSET), 0);
+		node = *(int *)(node + NEXTOFFSET) ? mem[*(int *)(node + NEXTOFFSET)] : NULL;
+#else
+		if((*(Blockkind *)(node + KINDOFFSET)) == efile){
+			filler(buf, (node + FILENAMEOFFSET), (node + FILESTOFFSET), 0);
+			node = *(int *)(node + NEXTOFFSET) ? mem[*(int *)(node + NEXTOFFSET)] : NULL;
 		}
 		else {
-			filler(buf, (node -> dir).dirname, &(node -> dir).dirst, 0);
-			node = (Blocknode *)((node -> dir).next);
+			filler(buf, (node + DIRNAMEOFFSET),(node + DIRSTOFFSET), 0);
+			node = *(int *)(node + NEXTOFFSET) ? mem[*(int *)(node + NEXTOFFSET)] : NULL;
 		}
+#endif // fastmode
     }
     return 0;
 }
@@ -722,9 +988,9 @@ static int oshfs_open(const char *path, struct fuse_file_info *fi)
 printf("[debug] open\n");
 #endif // debugprint
 
-	Blocknode *node = getBlockNode(path, 0, NULL);
+	char *node = getBlockNode(path, 0, NULL);
     if(!node) return -ENOENT;		//没有找到文件
-    if(node -> kind != efile)return -EISDIR;		//是个文件夹
+    if(*(Blockkind *)(node + KINDOFFSET) != efile) return -EISDIR;		//是个文件夹
     return 0;
 }
 
@@ -734,28 +1000,26 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
 
 #ifdef debugprint
 	printf("[debug] write : path = %s, size = %ld, offset = %ld\n", path, size, offset);
+    //if(root) printf("        before write: (*(Blockkind *)(root + KINDOFFSET)) == %s!\n", (*(Blockkind *)(root + KINDOFFSET)) == efile ? "efile" : "edir");
 #endif // debugprint
 
-#ifdef debugprint
-    if(root) printf("        before write: root -> kind == %s!\n", root -> kind == efile ? "efile" : "edir");
-#endif // debugprint
-
-	Blocknode *node;
+	char *node;
 	if(cachemode && !strcmp(path, lastpath) && last) node = last;
     else {
 		node = getBlockNode(path, 0, NULL);
 		if(!node) return -ENOENT;		//没有找到文件
-		if(node -> kind != efile)return -EISDIR;		//是个文件夹
+		if((*(Blockkind *)(node + KINDOFFSET)) != efile)return -EISDIR;		//是个文件夹
 		strcpy(lastpath, path);
 	}
-    if((node -> file).filest.st_size < offset + size) (node -> file).filest.st_size = offset + size;
+	struct stat *sp = (struct stat *)(node + FILESTOFFSET);
+    if(sp -> st_size < offset + size) sp -> st_size = offset + size;
     if(adjustFileContent(node, offset, buf, size)){
 		last = NULL;
 		return -ENOMEM;
 	}
 
 #ifdef debugprint
-    if(root) printf("        after write: root -> kind == %s!\n", root -> kind == efile ? "efile" : "edir");
+    //if(root) printf("        after write: (*(Blockkind *)(root + KINDOFFSET)) == %s!\n", (*(Blockkind *)(root + KINDOFFSET)) == efile ? "efile" : "edir");
 #endif // debugprint
 
     return size;
@@ -769,11 +1033,11 @@ printf("[debug] truncate : path = %s , size = %ld\n", path, size);
 #endif // debugprint
 
 	last = NULL;
-    Blocknode *node = getBlockNode(path, 0, NULL);
+    char *node = getBlockNode(path, 0, NULL);
     if(!node) return -ENOENT;		//没有找到文件
-	if(node -> kind != efile)return -EISDIR;		//是个文件夹
-    (node -> file).filest.st_size = size;
-    if(modifyCurrentFileContentSize(node, size))return -ENOMEM;	//空间不足
+	if(*(Blockkind *)(node + KINDOFFSET) != efile) return -EISDIR;		//是个文件夹
+    ((struct stat *)(node + FILESTOFFSET)) -> st_size = size;
+    if(modifyCurrentFileContentSize(node, size)) return -ENOMEM;	//空间不足
     return 0;
 }
 
@@ -785,12 +1049,12 @@ printf("[debug] read\n");
 #endif // debugprint
 
 	last = NULL;
-    Blocknode *node = getBlockNode(path, 0, NULL);
+    char *node = getBlockNode(path, 0, NULL);
     if(!node) return -ENOENT;		//没有找到文件
-    if(node -> kind != efile)return -EISDIR;		//是个文件夹
+    if(*(Blockkind *)(node + KINDOFFSET) != efile) return -EISDIR;		//是个文件夹
     int ret = size;
-    if(offset + size > (node -> file).filest.st_size)
-        ret = (node -> file).filest.st_size - offset;
+    if(offset + size > (*(struct stat *)(node + FILESTOFFSET)).st_size)
+        ret = (*(struct stat *)(node + FILESTOFFSET)).st_size - offset;
 	readFileContent(node, buf, offset, ret);
     return ret;
 }
@@ -803,14 +1067,16 @@ printf("[debug] unlink : %s\n", path);
 #endif // debugprint
 
 	last = NULL;
-	Blocknode *node = getBlockNode(path, 0, NULL);
+	char *node = getBlockNode(path, 0, NULL);
     if(!node) return -ENOENT;		//没有找到文件
-    if((node -> kind) == edir){
-		destroyBlockNodeAndChildren((Blocknode *)((node -> dir).firstchild));	//clear dir's children
+    if(*(Blockkind *)(node + KINDOFFSET) == edir){
+		int ti = *(int *)(node + FIRSTCHILDOFFSET);
+		if(ti) destroyBlockNodeAndChildren(mem[ti]);	//clear dir's children
 		deleteBlockNode(path);
 	}
 	else{
-		destroyBlockDataLinkList((Blocknode *)((node -> file).nextcontent));	//clear content
+		int ti = *(int *)(node + NEXTCONTENTOFFSET);
+		if(ti) destroyBlockDataLinkList(mem[ti]);	//clear content
 		deleteBlockNode(path);
 	}
     return 0;
@@ -845,10 +1111,10 @@ static int oshfs_rmdir(const char *path)
 printf("[debug] rmdir\n");
 #endif // debugprint
 
-	Blocknode *node = getBlockNode(path, 0, NULL);
+	char *node = getBlockNode(path, 0, NULL);
     if(!node) return -ENOENT;		//没有找到文件
-    if((node -> kind) == edir){
-		if(((node -> dir).firstchild)) return -ENOTEMPTY;
+    if(*(Blockkind *)(node + KINDOFFSET) == edir){
+		if(*(int *)(node + FIRSTCHILDOFFSET) ? mem[*(int *)(node + FIRSTCHILDOFFSET)] : NULL) return -ENOTEMPTY;
 		deleteBlockNode(path);
 	}
 	else{
@@ -865,9 +1131,9 @@ printf("[debug] opendir : %s\n", path);
 #endif // debugprint
 
 	if(!strcmp(path, "/")) return 0;
-	Blocknode *node = getBlockNode(path, 0, NULL);
+	char *node = getBlockNode(path, 0, NULL);
 	if(!node) return -ENOENT;		//没有找到文件
-    if(node -> kind == efile) return -ENOTDIR;		//是个文件
+    if(*(Blockkind *)(node + KINDOFFSET) == efile) return -ENOTDIR;		//是个文件
     return 0;
 }
 
@@ -878,9 +1144,9 @@ static int oshfs_rename(const char *path, const char *newname)
 printf("[debug] rename : %s -> %s\n", path, newname);
 #endif // debugprint
 
-	Blocknode *node = getBlockNode(path, 0, NULL), *p;
+	char *node = getBlockNode(path, 0, NULL), *p;
 	char *str, *q = (char *)newname;
-	while(q)str = stringSplit(&q, '/');
+	while(q) str = stringSplit(&q, '/');
 	if(strlen(str) >= MAXNAMELEN - 1) return -ENAMETOOLONG;
 	if(!node) return -ENOENT;		//没有找到文件
     renameBlock(node, str);
@@ -899,17 +1165,17 @@ static int oshfs_chmod(const char *path, mode_t mode)
 printf("[debug] chmod : %s, mode = %d\n", path, mode);
 #endif // debugprint
 
-	Blocknode *node = getBlockNode(path, 0, NULL);
+	char *node = getBlockNode(path, 0, NULL);
 	if(!node) return -ENOENT;		//没有找到文件
-	if(node -> kind == efile) {
-		(node -> file).filest.st_mode = S_IFREG | mode;
+	if((*(Blockkind *)(node + KINDOFFSET)) == efile) {
+		(*(struct stat *)(node + FILESTOFFSET)).st_mode = S_IFREG | mode;
 	}
 	else {
-		(node -> dir).dirst.st_mode = S_IFDIR | mode;
+		(*(struct stat *)(node + DIRSTOFFSET)).st_mode = S_IFDIR | mode;
 	}
 
 #ifdef debugprint
-printf("        kind =  %s\n", node -> kind == efile? "efile" : "edir");
+printf("        kind =  %s\n", (*(Blockkind *)(node + KINDOFFSET)) == efile? "efile" : "edir");
 #endif // debugprint
 
 	return 0;
@@ -922,16 +1188,21 @@ static int oshfs_chown(const char *path, uid_t uid, gid_t gid)
 printf("[debug] chown\n");
 #endif // debugprint
 
-	Blocknode *node = getBlockNode(path, 0, NULL);
+	char *node = getBlockNode(path, 0, NULL);
 	if(!node) return -ENOENT;		//没有找到文件
-	if(node -> kind == efile) {
-		(node -> file).filest.st_uid = uid;
-		(node -> file).filest.st_gid = gid;
+#ifdef fastmode
+	(*(struct stat *)(node + FILESTOFFSET)).st_uid = uid;
+	(*(struct stat *)(node + FILESTOFFSET)).st_gid = gid;
+#else
+	if((*(Blockkind *)(node + KINDOFFSET)) == efile) {
+		(*(struct stat *)(node + FILESTOFFSET)).st_uid = uid;
+		(*(struct stat *)(node + FILESTOFFSET)).st_gid = gid;
 	}
 	else {
-		(node -> dir).dirst.st_uid = uid;
-		(node -> dir).dirst.st_gid = gid;
+		(*(struct stat *)(node + DIRSTOFFSET)).st_uid = uid;
+		(*(struct stat *)(node + DIRSTOFFSET)).st_gid = gid;
 	}
+#endif // fastmode
 	return 0;
 }
 
@@ -942,20 +1213,26 @@ printf("[debug] destroy\n");
 #endif // debugprint
 
 	destroyBlockNodeAndChildren(root);
-	root = NULL;
+	destroyQueue(&Q);
+	*(char **)(mem[0]) = root = NULL;
 }
 
 static int oshfs_utime (const char *path, struct utimbuf *p){
-	Blocknode *node = getBlockNode(path, 0, NULL);
+	char *node = getBlockNode(path, 0, NULL);
     if(!node) return -ENOENT;		//没有找到文件
-    if(node -> kind == efile){
-		(node -> file).filest.st_atime = p -> actime;
-		(node -> file).filest.st_mtime = p -> modtime;
+#ifdef fastmode
+	(*(struct stat *)(node + FILESTOFFSET)).st_atime = p -> actime;
+	(*(struct stat *)(node + FILESTOFFSET)).st_mtime = p -> modtime;
+#else
+    if((*(Blockkind *)(node + KINDOFFSET)) == efile){
+		(*(struct stat *)(node + FILESTOFFSET)).st_atime = p -> actime;
+		(*(struct stat *)(node + FILESTOFFSET)).st_mtime = p -> modtime;
     }
     else {
-		(node -> dir).dirst.st_atime = p -> actime;
-		(node -> dir).dirst.st_mtime = p -> modtime;
+		(*(struct stat *)(node + DIRSTOFFSET)).st_atime = p -> actime;
+		(*(struct stat *)(node + DIRSTOFFSET)).st_mtime = p -> modtime;
     }
+#endif // fastmode
     return 0;
 }
 
