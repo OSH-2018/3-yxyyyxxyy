@@ -5,7 +5,16 @@
 #include <fuse.h>
 #include <sys/mman.h>
 
-//#define debugprint
+//#define debugprint	//打印调试信息
+//#define debugtime		//测试写入大文件的各个步骤的时间
+#define fastmode		//在这个模式下，必须保证共用体文件夹和文件对应成员完全对齐，能加速
+
+#ifdef debugtime
+#ifndef debugprint
+#include <stdio.h>
+#endif // debugprint
+#include <time.h>
+#endif // debugtime
 
 #ifdef debugprint
 #include <stdio.h>
@@ -14,13 +23,14 @@
 
 #define min(a,b) ((a) < (b) ? (a) : (b))
 
-#define fastmode		//在这个模式下，必须保证共用体文件夹和文件对应成员完全对齐，能加速
+
 
 #define MAXSIZE (2 * 1024 * 1024 * (size_t)1024)     //2GB
 #define BLOCKSIZE (4 * (size_t)1024)                 //4KB	注：不要修改！
 #define MAXNAMELEN 256								//文件名最长255个字符
 #define PATHMAXLEN 4096								//路径名最长4095个字符
 
+//存放在mem0中
 static const size_t size = MAXSIZE;                         //size = 2gb
 static const size_t blocksize = BLOCKSIZE;                  //blocksize = 4kb
 static const size_t blocknr = MAXSIZE / BLOCKSIZE;          //blocknr = num of block
@@ -136,7 +146,7 @@ static const size_t CONTENTSIZE = sizeof(testsize.file.content);	//constant
 #define CDATACONTENTSIZE (BLOCKSIZE - CDATACONTENTOFFSET)
 
 #ifdef fastmode
-//这个快速模式所有用到的，节省空间
+//这个快速模式所有用到的，节省空间。都是常量，无需存放在mem0
 static int KINDOFFSET,BLOCKNUMOFFSET,FILENAMEOFFSET,DIRNAMEOFFSET,NEXTOFFSET,NEXTDATAOFFSET,NEXTCONTENTOFFSET;
 static int FILESTOFFSET,FIRSTCHILDOFFSET,DIRSTOFFSET,DATACONTENTOFFSET,CONTENTSIZE,DATACONTENTSIZE,CONTENTOFFSET;
 
@@ -163,6 +173,7 @@ static int DIRNAMESIZE, DIRSTOFFSET ,DIRSTSIZE, FIRSTCHILDOFFSET, FIRSTCHILDSIZE
 
 /********链队列,用于加速下一个空闲节点获取*********/
 //用于加速下一个空闲结点的获取
+
 
 typedef struct qnode{
     int data;
@@ -213,17 +224,50 @@ static int deQueue(LinkQueue *q, int *data){
     return 1;
 }
 
+//这个队列无需存放在mem指向的内存中。用不用它只影响文件系统的速度。如果不用他，可以顺序查找未用mem，只不过复杂度由O1变成On
+//用于存储空间分配算法
 static LinkQueue Q;		//未用mem结点队列
 
 
 /********类似cache，用于加速大文件写入********/
 
+//这些无需存放在mem指向的内存中，只是用于加速大文件写入
 static char *last = NULL, *tail = NULL;		//last tail 上一次访问的文件、数据的尾部
 static off_t lastoffset = 0, lastsize = 0;	//相当于一个cache用于提升write的速度。write总是4k4k的写
-static char lastpath[PATHMAXLEN];					//上一次的path，用于cache
+static char lastpath[PATHMAXLEN];			//上一次的path，用于cache
 
 
+/*******计时 测试性能用 *********/
+//linux下好象不是很准
+#ifdef debugtime
+//在调用chmod函数时打印和清空
+#define TIMENUM 3
 
+static clock_t dt[TIMENUM][2];
+static clock_t tot[TIMENUM];
+
+static void inittime(){
+	memset(dt, 0, sizeof(dt));
+	memset(tot, 0, sizeof(tot));
+}
+
+static void settime(int k){
+	dt[k][0] = clock();
+}
+
+static void endtime(int k){
+	dt[k][1] = clock();
+	tot[k] += (dt[k][1] - dt[k][0]);
+}
+
+static void printtime(){
+	int i;
+	for(i = 0; i < TIMENUM; i ++){
+		printf("[time] duration%d = %.2fs\n", i, (float)tot[i]/CLOCKS_PER_SEC);
+		//printf("[time] duration%d = %ld\n", i, tot[i]);
+	}
+}
+#endif // debugtime
 /************************************辅助函数、全局变量*************************************/
 
 static char *mem[MAXSIZE / BLOCKSIZE];	//0用于存储头指针
@@ -649,6 +693,9 @@ static int modifyCurrentFileContentSize(char *node, size_t targetSize){
 }
 
 static int adjustFileContent(char *node, off_t offset, const char *buf, size_t size){	//在node文件中offset处写入大小为size的buf
+#ifdef debugtime
+	settime(0);
+#endif // debugtime
 	int hit = 0;
 	char *save;
 	size_t hitoffset;
@@ -697,6 +744,10 @@ static int adjustFileContent(char *node, off_t offset, const char *buf, size_t s
 		}
 
 	else if(modifyCurrentFileContentSize(node, ((struct stat *)(node + FILESTOFFSET)) -> st_size)) return 1;	//空间不足
+#ifdef debugtime
+	endtime(0);		//0表示分配空间用时
+	settime(1);
+#endif // debugtime
 	lastoffset = offset;
 	char *p = last = node;
 	char *pos = (char *)buf;
@@ -732,6 +783,9 @@ static int adjustFileContent(char *node, off_t offset, const char *buf, size_t s
 			p = *(int *)(p + NEXTDATAOFFSET) ? mem[*(int *)(p + NEXTDATAOFFSET)] : NULL;
 		}
 	}
+#ifdef debugtime
+	endtime(1);		//1表示写入文件用时
+#endif // debugtime
 	return 0;
 }
 
@@ -803,7 +857,6 @@ static void renameBlock(char *node, const char *newname){
 
 static void *oshfs_init(struct fuse_conn_info *conn)
 {
-
 	//计算各个常量
 #ifdef fastmode
 	//这个快速模式只计算用到的
@@ -871,6 +924,9 @@ static void *oshfs_init(struct fuse_conn_info *conn)
 	char *pp = (char *)mmap(NULL, blocksize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	mem[0] = pp;
 	memset(pp, 0, sizeof(char *));	//root指针一开始是NULL 只用前n位存
+	*(size_t *)(pp + sizeof(char *)) = blocksize;
+	*(size_t *)(pp + sizeof(char *) + sizeof(size_t)) = blocknr;
+	*(size_t *)(pp + sizeof(char *) + sizeof(size_t) * 2) = size;
 
 	//检测是否可以使用cache
 	if(BLOCKSIZE != 4096) cachemode = 0;		//不是4k的块不能加速大文件写入
@@ -893,6 +949,10 @@ static void *oshfs_init(struct fuse_conn_info *conn)
 //    for(int i = 0; i < blocknr; i++) {
 //        munmap(mem[i], blocksize);
 //    }
+
+#ifdef debugtime
+	inittime();
+#endif // debugtime
 
 #ifdef debugprint
 	printFreeMem10(Q);
@@ -1003,6 +1063,9 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
     //if(root) printf("        before write: (*(Blockkind *)(root + KINDOFFSET)) == %s!\n", (*(Blockkind *)(root + KINDOFFSET)) == efile ? "efile" : "edir");
 #endif // debugprint
 
+#ifdef debugtime
+	settime(2);
+#endif // debugtime
 	char *node;
 	if(cachemode && !strcmp(path, lastpath) && last) node = last;
     else {
@@ -1013,6 +1076,9 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
 	}
 	struct stat *sp = (struct stat *)(node + FILESTOFFSET);
     if(sp -> st_size < offset + size) sp -> st_size = offset + size;
+#ifdef debugtime
+	endtime(2);
+#endif // debugtime
     if(adjustFileContent(node, offset, buf, size)){
 		last = NULL;
 		return -ENOMEM;
@@ -1160,6 +1226,10 @@ printf("[debug] rename : %s -> %s\n", path, newname);
 
 static int oshfs_chmod(const char *path, mode_t mode)
 {
+#ifdef debugtime
+	printtime();		//在这里打印时间
+	inittime();
+#endif // debugtime
 
 #ifdef debugprint
 printf("[debug] chmod : %s, mode = %d\n", path, mode);
